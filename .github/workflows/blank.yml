@@ -30,33 +30,7 @@ jobs:
       # Runs a single command using the runners shell
       - name: build
         uses: actions/setup-node@master
-      - run: npm install
-      - run: npm run build
       - run: tar -zcvf release.tgz LICENSE README.md 
-
-      # Runs a set of commands using the runners shell
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@master
-        env: 
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
-        with: 
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-     
-      # 第四步：上传构建结果到 Release（把打包的tgz上传到Release）
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }} # 上传地址，通过创建Release获取到的
-          asset_path: ./release.tgz # 要上传文件
-          asset_name: release.tgz # 上传后的文件名
-          asset_content_type: application/x-tgz
      
       - name: Deploy
         uses: appleboy/ssh-action@master
