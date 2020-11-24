@@ -30,7 +30,7 @@ jobs:
       # Runs a single command using the runners shell
       - name: build
         uses: actions/setup-node@master
-      - run: tar -zcvf release.tgz LICENSE README.md 
+      - run: tar -zcvf release.tgz LICENSE README.md test.sh
      
       - name: Deploy
         uses: appleboy/ssh-action@master
