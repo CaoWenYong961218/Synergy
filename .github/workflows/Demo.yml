@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: Publish And Deploy Demo
+name: Demo
 
 # Controls when the action will run. 
 on:
@@ -25,7 +25,7 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v1
 
       # Runs a single command using the runners shell
       - name: build
