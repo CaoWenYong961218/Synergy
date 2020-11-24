@@ -1,0 +1,73 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Publish And Deploy Demo
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  push:
+    branches: [ main ]
+  #pull_request:
+    #branches: [ main ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  #workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  #build:
+  build-and-deploy:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout
+        uses: actions/checkout@master
+
+      # Runs a single command using the runners shell
+      - name: build
+        uses: actions/setup-node@master
+      - run: npm install
+      - run: npm run build
+      - run: tar -zcvf release.tgz LICENSE README.md 
+
+      # Runs a set of commands using the runners shell
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@master
+        env: 
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        with: 
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+     
+      # 第四步：上传构建结果到 Release（把打包的tgz上传到Release）
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # 上传地址，通过创建Release获取到的
+          asset_path: ./release.tgz # 要上传文件
+          asset_name: release.tgz # 上传后的文件名
+          asset_content_type: application/x-tgz
+     
+      - name: Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          script: |
+            cd /root/realworld-nuxtjs
+            wget https://github.com/CaoWenYong961218/Synergy/releases/latest/download/release.tgz -O release.tgz
+        #run: |
+          #echo Add other actions to build,
+          #echo test, and deploy your project.
