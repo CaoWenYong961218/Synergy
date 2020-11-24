@@ -66,7 +66,7 @@ jobs:
           password: ${{ secrets.PASSWORD }}
           port: ${{ secrets.PORT }}
           script: |
-            cd /root/realworld-nuxtjs
+            cd /root/Synergy
             wget https://github.com/CaoWenYong961218/Synergy/releases/latest/download/release.tgz -O release.tgz
         #run: |
           #echo Add other actions to build,
