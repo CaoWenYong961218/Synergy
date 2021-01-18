@@ -1,0 +1,357 @@
+#!/bin/bash
+# qttstatus -h
+# qttstatus [node]   # all servers and info online
+# qttstatus node <ip:[port]>    # all servers and info online
+# qttstatus key    # list all keys
+# qttstatus key <key>   # list key details
+# qttstatus ban    # list all ban nodes
+# qttstatus ban add <node>  # ban the node
+# qttstatus ban del <node>  # unban the node
+# qttstatus test  # test status and all test rooms
+# qttstatus test on  # test status on
+# qttstatus test off  # test status off
+# qttstatus test add  # add test node
+# qttstatus test del  # delete test node
+# qttstatus room # room summaries
+# qttstatus room <roomid> # room details
+
+#REDIS="redis-cli"
+#REDIS="redis-cli -h 172.17.0.15 -p 6379 -a Ve5W%1d4bwI"
+REDIS="redis-cli -h 10.7.58.69 -p 6379 -a Ld5W94mC-bOc"
+CACHE_DIR=~/.qttstatus
+NODE_CACHE=~/.qttstatus/nodes
+KEY_CACHE=~/.qttstatus/keys
+declare -a ALL_CMDS=(node room test ban key);
+declare -a ALL_SUB_CMDS=(add del on off);
+declare -A ALL_HOSTS=(\
+    ["152.32.218.242"]="新加坡" \
+    ["152.32.214.33"]="香港" \
+    ["101.36.124.110"]="香港" \
+    ["152.32.191.169"]="香港" \
+    ["152.32.180.116"]="中东" \
+    ["152.32.180.8"]="中东" \
+    ["107.155.56.160"]="新加坡" \
+    ["107.155.55.183"]="新加坡" \
+    ["152.32.192.185"]="香港" \
+    ["171.244.33.222"]="越南" \
+    ["47.88.1.104"]="美国" \
+);
+
+cmd=node
+sub_cmd=
+param=
+
+function err_exit() {
+    echo "[ERROR] ${@}";
+    exit 1;
+}
+
+function app_rooms() {
+    appkey=$1;
+    filter=$2;
+    declare -a rooms=(`$REDIS keys "C:N:$appkey:*"`);
+    for room in ${rooms[@]}; do
+        room_info="`$REDIS get $room | grep "$filter"`";
+        if [ ! "$room_info" ]; then
+            continue;
+        fi
+        ttl="`$REDIS ttl $room | awk '{print $NF}'`";
+        echo "${room##*:}_${room_info}_$ttl";
+    done
+}
+
+function show_node_rooms() {
+    declare -a appkeys=(`echo "$2" | grep -oi '[0-9a-z]*'`);
+    for appkey in ${appkeys[@]}; do
+        declare -a rooms=(`app_rooms "$appkey" "$1"`);
+        if [ ${#rooms[@]} -eq 0 ]; then
+            continue;
+        fi
+        echo "---- $appkey  ${#rooms[@]}  rooms";
+        for room in ${rooms[@]}; do
+            room_name="`echo $room | awk -F_ '{print $1}'`";
+            room_id="`echo $room | grep -oi '"roomId":[0-9]*'`";
+            ttl="`echo $room | awk -F_ '{print $NF}'`";
+            echo "------ $room_name $room_id $ttl";
+        done
+    done
+}
+
+function check_prepared() {
+    return;
+    read -p "is prepare work checked ready? [Y|N] " choice;
+    if [ "$choice" == 'Y' ]; then
+        return 0;
+    fi
+    return 1;
+}
+
+function check_restored() {
+    return;
+    read -p "is restore work checked ready? [Y|N] " choice;
+    if [ "$choice" == 'Y' ]; then
+        return 0;
+    fi
+    return 1;
+}
+
+declare -a ban_list;
+function push_ban() {
+    ban_list=(`$REDIS SMEMBERS N:BAN | grep $1 | awk -F'"' '{print $2}'`);
+    for ban in ${ban_list[@]}; do
+        if [ "$ban" == "$1" ]; then
+            continue;
+        fi
+        $REDIS SREM N:BAN $ban;
+    done
+    $REDIS SADD N:BAN $1;
+}
+
+function pop_ban() {
+    $REDIS SREM N:BAN $1;
+    for ban in ${ban_list[@]}; do
+        $REDIS SADD N:BAN $ban;
+    done
+}
+
+function get_all_channels() {
+        rooms=(`$REDIS keys "C:N:*:*"`);
+        $REDIS MGET ${rooms[@]} > /tmp/.room_details;
+        declare -i idx=1;
+        for room in ${rooms[@]}; do
+            roomId="`sed -n "$idx p" /tmp/.room_details | grep $1 | grep -o '"roomId":[0-9]*'`";
+            if [ "$roomId" ]; then
+                echo "${room}_$roomId";
+            fi
+            idx=$((idx+1));
+        done
+}
+
+function get_all_routers() {
+    $REDIS hgetall N:ALL  | grep 'type.*router' | grep -o 'id":"[0-9.:]*' | awk -F'"' '{print $3}';
+}
+
+function stop_as_prepare() {
+    echo "preparing stop as";
+    # 1. ban node
+    push_ban "$1:$2";
+    # 2. delete channel caches
+    channels=(`get_all_channels "$1:$2"`);
+    echo "delete all channels: ${channels[@]}";
+    if [ ${#channels[@]} -gt 0 ]; then
+	for channel in ${channels[@]}; do
+            echo "delete channel ${channel%%_*}";
+            $REDIS DEL ${channel%%_*};
+	done
+    fi
+    # 3. kick all users
+    declare -a routers=(`get_all_routers`);
+    for router in ${routers[@]}; do
+        host=${router%%:*};
+        port=${router##*:};
+        port=$((port + 5));
+        for channel in ${channels[@]}; do
+	    # 13881936812 just for testing
+	    appkey=`echo $channel | awk -F':' '{if ($3=="default") print "15766975793"; else print $3;}'`;
+	    roomId=`echo $channel | awk -F':' '{print $NF}'`;
+	    curl "http://$host:$port/kick-user?appKey=$appkey&roomId=$roomId" &
+        done
+    done
+    check_prepared || { pop_ban "$1:$2"; err_exit "preparing stop as not ready, abort!"; };
+}
+
+function stop_as_restore() {
+    echo "restore as";
+    check_restored || err_exit "restore as not ready, abort without pop ban!";
+    pop_ban "$1:$2";
+}
+
+function start_as() {
+    echo "start_as";
+    ssh root@$1 "systemctl start qttroom_$2";
+}
+
+function stop_as() {
+    echo "stop_as";
+    stop_as_prepare $1 $2;
+    ssh root@$1 "systemctl stop qttroom_$2";
+    $REDIS hdel N:ALL "$1:$2";
+    stop_as_restore $1 $2;
+}
+
+function restart_as() {
+    echo "restart_as";
+    stop_as_prepare $1 $2;
+    ssh root@$1 "systemctl restart qttroom_$2";
+    stop_as_restore $1 $2;
+}
+
+function stop_router_prepare() {
+    echo "preparing stop router";
+    # 1. ban node
+    push_ban "$1:$2";
+    check_prepared || err_exit "preparing stop router not ready, abort!";
+}
+
+function stop_router_restore() {
+    echo "restore router";
+    check_restored || err_exit "restore router not ready, abort without pop ban!";
+    pop_ban "$1:$2";
+}
+
+function start_router() {
+    echo "start_router";
+    ssh root@$1 "systemctl start qttrouter_$2";
+}
+
+function stop_router() {
+    echo "stop_router";
+    stop_router_prepare $1 $2;
+    ssh root@$1 "systemctl stop qttrouter_$2";
+    $REDIS hdel N:ALL "$1:$2";
+    stop_router_restore $1 $2;
+}
+
+function restart_router() {
+    echo "restart_router";
+    stop_router_prepare $1 $2;
+    ssh root@$1 "systemctl restart qttrouter_$2";
+    stop_router_restore $1 $2;
+}
+
+
+function node_ctrl() {
+    declare host=${3%%:*};
+    declare port=${3##*:};
+    if [ ! "$host" -o ! "$port" ]; then
+        err_exit "$1_$2 $3 host or port empty";
+    fi
+    case $1 in
+        start|stop|restart)
+            echo "$1 $2 $3";
+            $1_$2 "$host" "$port";
+            ;;
+        *)
+            err_exit "cmd $1 not supported";
+            ;;
+    esac
+}
+
+function node_sub_cmd() {
+    declare node_type=as;
+    if [[ "$param" = *:94* ]]; then
+        node_type=router;
+    fi
+    node_ctrl $sub_cmd $node_type $param;
+}
+
+function node_cmd() {
+    if [ "$sub_cmd" ]; then
+        node_sub_cmd;
+        return;
+    fi
+    $REDIS keys "N:[0-9.]*:[0-9]*" | awk '{print substr($NF,3)}' | sort > $NODE_CACHE;
+    declare -a nodes=(`cat $NODE_CACHE | grep "$param"`);
+    for node in ${nodes[@]}; do
+        node_ip=`echo $node | grep -o "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*"`;
+        echo "$node ${ALL_HOSTS[$node_ip]}";
+        node_info="`$REDIS hget N:ALL $node`";
+        echo "-- $node_info";
+        if [ ${#nodes[@]} -eq 1 ]; then
+            echo "-- rooms:";
+            appkeys="`echo $node_info | grep -oi '"appkeys":\[[a-z0-9",]*\]' | awk -F: '{print $2}'`";
+            show_node_rooms "$node" "$appkeys";
+	    port=${node##*:};
+	    port=$((port + 5));
+	    curl "http://$node_ip:$port/status" | json_pp;
+        fi
+    done
+}
+
+function room_cmd() {
+    echo "not supported";
+}
+
+function ban_cmd() {
+    if [ ! "$sub_cmd" ]; then
+        $REDIS smembers N:BAN
+    elif [ "$sub_cmd" == "add" ]; then
+        $REDIS sadd N:BAN $param
+    elif [ "$sub_cmd" == "del" ]; then
+        $REDIS srem N:BAN $param
+    else
+        err_exit "ban sub command '$sub_cmd' not supported";
+	fi
+}
+
+function key_cmd() {
+    echo "not supported";
+}
+
+function test_cmd() {
+    echo "not supported";
+}
+
+function show_help() {
+    echo "Usage: qttstatus [cmd] [sub_cmd] [param]"
+}
+
+function parse_params() {
+    if [ "-h" == "$1" ]; then
+        show_help;
+        exit 0;
+    fi
+    if [ $# -gt 3 ]; then
+        show_help;
+        err_exit "invalid command";
+    elif [ $# -eq 3 ]; then
+        cmd="$1";
+        sub_cmd="$2";
+        param="$3";
+    elif [ $# -eq 2 ]; then
+        cmd="$1";
+        if [[ ${ALL_SUB_CMDS[@]/$2/} != ${ALL_SUB_CMDS[@]} ]]; then
+            sub_cmd="$2";
+        else
+            param="$2";
+        fi
+    elif [ $# -eq 1 ]; then
+        cmd="$1";
+    fi
+}
+
+# Todo, check commands thoroughly.
+function check_params() {
+    if [[ ${ALL_CMDS[@]/$cmd/} != ${ALL_CMDS[@]} ]]; then
+        return 0;
+    fi
+    return 1;
+}
+
+function run() {
+    parse_params "${@}" || err_exit "parse params failed";
+    check_params || err_exit "params invalid";
+    mkdir -p $CACHE_DIR;
+    case $cmd in
+        node)
+            node_cmd;
+            ;;
+        room)
+            room_cmd;
+            ;;
+        ban)
+            ban_cmd;
+            ;;
+        key)
+            key_cmd;
+            ;;
+        test)
+            test_cmd;
+            ;;
+        *)
+            err_exit "not supported cmd '$cmd'";
+    esac
+}
+
+run "${@}"
+
