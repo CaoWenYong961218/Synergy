@@ -15,9 +15,7 @@
 # qttstatus room # room summaries
 # qttstatus room <roomid> # room details
 
-#REDIS="redis-cli"
-#REDIS="redis-cli -h 172.17.0.15 -p 6379 -a Ve5W%1d4bwI"
-REDIS="redis-cli -h 10.7.58.69 -p 6379 -a Ld5W94mC-bOc"
+REDIS="redis-cli"
 CACHE_DIR=~/.qttstatus
 NODE_CACHE=~/.qttstatus/nodes
 KEY_CACHE=~/.qttstatus/keys
